@@ -1,0 +1,11 @@
+/target/
+*.exe
+*.obj
+*.lib
+*.pdb
+*.ilk
+*.exp
+*.c
+!runtime/velo_rt.c
+.vs/
+.vscode/

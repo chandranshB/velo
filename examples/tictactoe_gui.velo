@@ -1,0 +1,651 @@
+subsystem "windows"
+
+import win32
+
+const CELL_EMPTY: i32 = 0
+const CELL_X: i32 = 1
+const CELL_O: i32 = 2
+
+const WIN_W: i32 = 560
+const WIN_H: i32 = 720
+
+struct UiLayout:
+    win_w: i32
+    win_h: i32
+    board_x: i32
+    board_y: i32
+    board_size: i32
+    cell_size: i32
+    btn_new_x1: i32
+    btn_new_y1: i32
+    btn_new_x2: i32
+    btn_new_y2: i32
+    btn_mode_x1: i32
+    btn_mode_y1: i32
+    btn_mode_x2: i32
+    btn_mode_y2: i32
+    btn_first_x1: i32
+    btn_first_y1: i32
+    btn_first_x2: i32
+    btn_first_y2: i32
+
+struct GameState:
+    board: [i32; 9]
+    turn: i32
+    winner: i32
+    is_draw: bool
+    win_line_idx: i32
+    score_x: i32
+    score_o: i32
+    draws: i32
+    vs_ai: bool
+    ai_starts: bool
+    hover_cell: i32
+    hover_btn: i32
+    ai_thinking: bool
+    hwnd: ptr
+
+    def init(var self, hwnd: ptr):
+        for i in 0..9:
+            self.board[i] = CELL_EMPTY
+        self.turn = CELL_X
+        self.winner = CELL_EMPTY
+        self.is_draw = false
+        self.win_line_idx = -1
+        self.score_x = 0
+        self.score_o = 0
+        self.draws = 0
+        self.vs_ai = true
+        self.ai_starts = false
+        self.hover_cell = -1
+        self.hover_btn = 0
+        self.ai_thinking = false
+        self.hwnd = hwnd
+
+    def reset_round(var self):
+        for i in 0..9:
+            self.board[i] = CELL_EMPTY
+        self.winner = CELL_EMPTY
+        self.is_draw = false
+        self.win_line_idx = -1
+        self.ai_thinking = false
+        if self.vs_ai and self.ai_starts:
+            self.turn = CELL_O
+            self.ai_thinking = true
+            win32.SetTimer(self.hwnd, 1, 180, null)
+        else:
+            self.turn = CELL_X
+
+    def is_full(self) -> bool:
+        for i in 0..9:
+            if self.board[i] == CELL_EMPTY:
+                return false
+        return true
+
+    def evaluate_board(var self):
+        let lines: [[i32; 3]; 8] = [
+            [0, 1, 2], [3, 4, 5], [6, 7, 8],
+            [0, 3, 6], [1, 4, 7], [2, 5, 8],
+            [0, 4, 8], [2, 4, 6]
+        ]
+        for li in 0..8:
+            let a = self.board[lines[li][0]]
+            if a != CELL_EMPTY and a == self.board[lines[li][1]] and a == self.board[lines[li][2]]:
+                self.winner = a
+                self.win_line_idx = li as i32
+                if a == CELL_X:
+                    self.score_x += 1
+                else:
+                    self.score_o += 1
+                return
+        if self.is_full():
+            self.is_draw = true
+            self.draws += 1
+
+    def play_move(var self, cell: i32) -> bool:
+        if cell < 0 or cell >= 9:
+            return false
+        if self.winner != CELL_EMPTY or self.is_draw:
+            return false
+        if self.board[cell] != CELL_EMPTY:
+            return false
+        self.board[cell] = self.turn
+        self.evaluate_board()
+        if self.winner == CELL_EMPTY and not self.is_draw:
+            self.turn = CELL_O if self.turn == CELL_X else CELL_X
+            if self.vs_ai and self.turn == CELL_O:
+                self.ai_thinking = true
+                win32.SetTimer(self.hwnd, 1, 180, null)
+        return true
+
+def check_winner_pure(b: *i32) -> i32:
+    if b[0] != 0 and b[0] == b[1] and b[1] == b[2]:
+        return b[0]
+    if b[3] != 0 and b[3] == b[4] and b[4] == b[5]:
+        return b[3]
+    if b[6] != 0 and b[6] == b[7] and b[7] == b[8]:
+        return b[6]
+    if b[0] != 0 and b[0] == b[3] and b[3] == b[6]:
+        return b[0]
+    if b[1] != 0 and b[1] == b[4] and b[4] == b[7]:
+        return b[1]
+    if b[2] != 0 and b[2] == b[5] and b[5] == b[8]:
+        return b[2]
+    if b[0] != 0 and b[0] == b[4] and b[4] == b[8]:
+        return b[0]
+    if b[2] != 0 and b[2] == b[4] and b[4] == b[6]:
+        return b[2]
+    return 0
+
+def minimax(b: *i32, depth: i32, is_max: bool, alpha_in: i32, beta_in: i32) -> i32:
+    let w = check_winner_pure(b)
+    if w == CELL_O:
+        return 100 - depth
+    if w == CELL_X:
+        return depth - 100
+    var full = true
+    for i in 0..9:
+        if b[i] == CELL_EMPTY:
+            full = false
+            break
+    if full:
+        return 0
+
+    var alpha = alpha_in
+    var beta = beta_in
+    if is_max:
+        var best: i32 = -1000
+        for i in 0..9:
+            if b[i] == CELL_EMPTY:
+                b[i] = CELL_O
+                let score = minimax(b, depth + 1, false, alpha, beta)
+                b[i] = CELL_EMPTY
+                if score > best:
+                    best = score
+                if best > alpha:
+                    alpha = best
+                if beta <= alpha:
+                    break
+        return best
+    else:
+        var best: i32 = 1000
+        for i in 0..9:
+            if b[i] == CELL_EMPTY:
+                b[i] = CELL_X
+                let score = minimax(b, depth + 1, true, alpha, beta)
+                b[i] = CELL_EMPTY
+                if score < best:
+                    best = score
+                if best < beta:
+                    beta = best
+                if beta <= alpha:
+                    break
+        return best
+
+def pick_ai_move(g: *GameState) -> i32:
+    var tmp: [i32; 9] = [0; 9]
+    var empty_count = 0
+    for i in 0..9:
+        tmp[i] = g.board[i]
+        if tmp[i] == CELL_EMPTY:
+            empty_count += 1
+    # Fast optimal opening when board is completely empty (center or corner)
+    if empty_count == 9:
+        return 4
+    var best_score: i32 = -10000
+    var best_move: i32 = -1
+    for i in 0..9:
+        if tmp[i] == CELL_EMPTY:
+            tmp[i] = CELL_O
+            let sc = minimax(&tmp[0], 0, false, -10000, 10000)
+            tmp[i] = CELL_EMPTY
+            if sc > best_score:
+                best_score = sc
+                best_move = i as i32
+    return best_move
+
+def compute_layout(w: i32, h: i32) -> UiLayout:
+    var lo = zeroed(UiLayout)
+    lo.win_w = w
+    lo.win_h = h
+    let top_reserve: i32 = 178
+    let bot_reserve: i32 = 98
+    let avail_w = w - 64
+    let avail_h = h - top_reserve - bot_reserve
+    let raw_sz = avail_w if avail_w < avail_h else avail_h
+    let clamped = 240 if raw_sz < 240 else raw_sz
+    let cell = clamped / 3
+    let board_sz = cell * 3
+    lo.cell_size = cell
+    lo.board_size = board_sz
+    lo.board_x = (w - board_sz) / 2
+    lo.board_y = top_reserve + (avail_h - board_sz) / 2
+
+    let btn_y1 = h - 72
+    let btn_y2 = h - 28
+    let gap: i32 = 12
+    let total_w = board_sz
+    let w1 = (total_w - gap * 2) / 3
+    lo.btn_new_x1 = lo.board_x
+    lo.btn_new_y1 = btn_y1
+    lo.btn_new_x2 = lo.board_x + w1
+    lo.btn_new_y2 = btn_y2
+
+    lo.btn_mode_x1 = lo.btn_new_x2 + gap
+    lo.btn_mode_y1 = btn_y1
+    lo.btn_mode_x2 = lo.btn_mode_x1 + w1
+    lo.btn_mode_y2 = btn_y2
+
+    lo.btn_first_x1 = lo.btn_mode_x2 + gap
+    lo.btn_first_y1 = btn_y1
+    lo.btn_first_x2 = lo.board_x + total_w
+    lo.btn_first_y2 = btn_y2
+    return lo
+
+def hit_test_cell(lo: *UiLayout, mx: i32, my: i32) -> i32:
+    if mx < lo.board_x or mx >= lo.board_x + lo.board_size:
+        return -1
+    if my < lo.board_y or my >= lo.board_y + lo.board_size:
+        return -1
+    let col = (mx - lo.board_x) / lo.cell_size
+    let row = (my - lo.board_y) / lo.cell_size
+    if col < 0 or col >= 3 or row < 0 or row >= 3:
+        return -1
+    return row * 3 + col
+
+def hit_test_btn(lo: *UiLayout, mx: i32, my: i32) -> i32:
+    if mx >= lo.btn_new_x1 and mx <= lo.btn_new_x2 and my >= lo.btn_new_y1 and my <= lo.btn_new_y2:
+        return 1
+    if mx >= lo.btn_mode_x1 and mx <= lo.btn_mode_x2 and my >= lo.btn_mode_y1 and my <= lo.btn_mode_y2:
+        return 2
+    if mx >= lo.btn_first_x1 and mx <= lo.btn_first_x2 and my >= lo.btn_first_y1 and my <= lo.btn_first_y2:
+        return 3
+    return 0
+
+def fill_round_card(hdc: ptr, x1: i32, y1: i32, x2: i32, y2: i32, r: i32, fill_col: u32, border_col: u32):
+    let br = win32.CreateSolidBrush(fill_col)
+    let pen = win32.CreatePen(win32.PS_SOLID, 1, border_col)
+    let old_br = win32.SelectObject(hdc, br)
+    let old_pen = win32.SelectObject(hdc, pen)
+    win32.RoundRect(hdc, x1, y1, x2, y2, r, r)
+    win32.SelectObject(hdc, old_br)
+    win32.SelectObject(hdc, old_pen)
+    win32.DeleteObject(br)
+    win32.DeleteObject(pen)
+
+def draw_x_mark(hdc: ptr, cx: i32, cy: i32, radius: i32, color: u32, thickness: i32):
+    let pen = win32.CreatePen(win32.PS_SOLID, thickness, color)
+    let old_pen = win32.SelectObject(hdc, pen)
+    win32.MoveToEx(hdc, cx - radius, cy - radius, null)
+    win32.LineTo(hdc, cx + radius, cy + radius)
+    win32.MoveToEx(hdc, cx + radius, cy - radius, null)
+    win32.LineTo(hdc, cx - radius, cy + radius)
+    win32.SelectObject(hdc, old_pen)
+    win32.DeleteObject(pen)
+
+def draw_o_mark(hdc: ptr, cx: i32, cy: i32, radius: i32, color: u32, thickness: i32):
+    let pen = win32.CreatePen(win32.PS_SOLID, thickness, color)
+    let null_br = win32.GetStockObject(win32.NULL_BRUSH)
+    let old_pen = win32.SelectObject(hdc, pen)
+    let old_br = win32.SelectObject(hdc, null_br)
+    win32.Ellipse(hdc, cx - radius, cy - radius, cx + radius, cy + radius)
+    win32.SelectObject(hdc, old_pen)
+    win32.SelectObject(hdc, old_br)
+    win32.DeleteObject(pen)
+
+def is_winning_cell(win_line_idx: i32, idx: i32) -> bool:
+    if win_line_idx < 0:
+        return false
+    let lines: [[i32; 3]; 8] = [
+        [0, 1, 2], [3, 4, 5], [6, 7, 8],
+        [0, 3, 6], [1, 4, 7], [2, 5, 8],
+        [0, 4, 8], [2, 4, 6]
+    ]
+    let row = lines[win_line_idx]
+    return row[0] == idx or row[1] == idx or row[2] == idx
+
+def draw_scene(hdc_screen: ptr, g: *GameState, client_w: i32, client_h: i32):
+    let mem_dc = win32.CreateCompatibleDC(hdc_screen)
+    let bmp = win32.CreateCompatibleBitmap(hdc_screen, client_w, client_h)
+    let old_bmp = win32.SelectObject(mem_dc, bmp)
+    win32.SetBkMode(mem_dc, win32.TRANSPARENT)
+
+    # Palette
+    let col_bg = win32.rgb(15, 23, 42)
+    let col_card = win32.rgb(30, 41, 59)
+    let col_cell = win32.rgb(24, 34, 52)
+    let col_cell_hover = win32.rgb(38, 52, 77)
+    let col_win_cell = win32.rgb(20, 62, 60)
+    let col_border = win32.rgb(51, 65, 85)
+    let col_x = win32.rgb(56, 189, 248)
+    let col_o = win32.rgb(251, 113, 133)
+    let col_win = win32.rgb(52, 211, 153)
+    let col_text = win32.rgb(241, 245, 249)
+    let col_muted = win32.rgb(148, 163, 184)
+    let col_btn = win32.rgb(30, 41, 59)
+    let col_btn_hover = win32.rgb(51, 65, 85)
+
+    # Background
+    var bg_rc = win32.RECT(left: 0, top: 0, right: client_w, bottom: client_h)
+    let bg_br = win32.CreateSolidBrush(col_bg)
+    win32.FillRect(mem_dc, &bg_rc, bg_br)
+    win32.DeleteObject(bg_br)
+
+    let lo = compute_layout(client_w, client_h)
+
+    let font_title = win32.CreateFontW(30, 0, 0, 0, win32.FW_BOLD, 0, 0, 0, 1, 0, 0, win32.CLEARTYPE_QUALITY, 0, w"Segoe UI")
+    let font_sub = win32.CreateFontW(18, 0, 0, 0, win32.FW_SEMIBOLD, 0, 0, 0, 1, 0, 0, win32.CLEARTYPE_QUALITY, 0, w"Segoe UI")
+    let font_score = win32.CreateFontW(22, 0, 0, 0, win32.FW_BOLD, 0, 0, 0, 1, 0, 0, win32.CLEARTYPE_QUALITY, 0, w"Segoe UI")
+    let font_btn = win32.CreateFontW(16, 0, 0, 0, win32.FW_SEMIBOLD, 0, 0, 0, 1, 0, 0, win32.CLEARTYPE_QUALITY, 0, w"Segoe UI")
+
+    # Header Title
+    let old_font = win32.SelectObject(mem_dc, font_title)
+    win32.SetTextColor(mem_dc, col_text)
+    var title_rc = win32.RECT(left: 0, top: 18, right: client_w, bottom: 54)
+    win32.DrawTextW(mem_dc, w"TIC-TAC-TOE", -1, &title_rc, win32.DT_CENTER | win32.DT_VCENTER | win32.DT_SINGLELINE)
+
+    # Scoreboard Card
+    fill_round_card(mem_dc, lo.board_x, 64, lo.board_x + lo.board_size, 124, 14, col_card, col_border)
+    win32.SelectObject(mem_dc, font_score)
+    let third = lo.board_size / 3
+    let p1_label = "You (X)" if g.vs_ai else "P1 (X)"
+    let p2_label = "AI (O)" if g.vs_ai else "P2 (O)"
+
+    let s1 = f"{p1_label}: {g.score_x}"
+    defer free(s1.ptr as ptr)
+    var r1 = win32.RECT(left: lo.board_x, top: 64, right: lo.board_x + third, bottom: 124)
+    win32.SetTextColor(mem_dc, col_x)
+    win32.DrawTextA(mem_dc, s1 as cstr, s1.len as i32, &r1, win32.DT_CENTER | win32.DT_VCENTER | win32.DT_SINGLELINE)
+
+    let s2 = f"Draws: {g.draws}"
+    defer free(s2.ptr as ptr)
+    var r2 = win32.RECT(left: lo.board_x + third, top: 64, right: lo.board_x + third * 2, bottom: 124)
+    win32.SetTextColor(mem_dc, col_muted)
+    win32.DrawTextA(mem_dc, s2 as cstr, s2.len as i32, &r2, win32.DT_CENTER | win32.DT_VCENTER | win32.DT_SINGLELINE)
+
+    let s3 = f"{p2_label}: {g.score_o}"
+    defer free(s3.ptr as ptr)
+    var r3 = win32.RECT(left: lo.board_x + third * 2, top: 64, right: lo.board_x + lo.board_size, bottom: 124)
+    win32.SetTextColor(mem_dc, col_o)
+    win32.DrawTextA(mem_dc, s3 as cstr, s3.len as i32, &r3, win32.DT_CENTER | win32.DT_VCENTER | win32.DT_SINGLELINE)
+
+    # Status Banner
+    win32.SelectObject(mem_dc, font_sub)
+    var status_rc = win32.RECT(left: 0, top: 134, right: client_w, bottom: 168)
+    if g.winner == CELL_X:
+        win32.SetTextColor(mem_dc, col_win)
+        let msg = w"You Win!" if g.vs_ai else w"Player 1 (X) Wins!"
+        win32.DrawTextW(mem_dc, msg, -1, &status_rc, win32.DT_CENTER | win32.DT_VCENTER | win32.DT_SINGLELINE)
+    elif g.winner == CELL_O:
+        win32.SetTextColor(mem_dc, col_o if g.vs_ai else col_win)
+        let msg = w"AI Wins!" if g.vs_ai else w"Player 2 (O) Wins!"
+        win32.DrawTextW(mem_dc, msg, -1, &status_rc, win32.DT_CENTER | win32.DT_VCENTER | win32.DT_SINGLELINE)
+    elif g.is_draw:
+        win32.SetTextColor(mem_dc, col_muted)
+        win32.DrawTextW(mem_dc, w"Draw Game — Well Played!", -1, &status_rc, win32.DT_CENTER | win32.DT_VCENTER | win32.DT_SINGLELINE)
+    elif g.ai_thinking:
+        win32.SetTextColor(mem_dc, col_o)
+        win32.DrawTextW(mem_dc, w"AI is thinking...", -1, &status_rc, win32.DT_CENTER | win32.DT_VCENTER | win32.DT_SINGLELINE)
+    elif g.turn == CELL_X:
+        win32.SetTextColor(mem_dc, col_x)
+        let msg = w"Your Turn (X)" if g.vs_ai else w"Player 1's Turn (X)"
+        win32.DrawTextW(mem_dc, msg, -1, &status_rc, win32.DT_CENTER | win32.DT_VCENTER | win32.DT_SINGLELINE)
+    else:
+        win32.SetTextColor(mem_dc, col_o)
+        let msg = w"Player 2's Turn (O)"
+        win32.DrawTextW(mem_dc, msg, -1, &status_rc, win32.DT_CENTER | win32.DT_VCENTER | win32.DT_SINGLELINE)
+
+    # Outer Board Card
+    fill_round_card(mem_dc, lo.board_x - 10, lo.board_y - 10, lo.board_x + lo.board_size + 10, lo.board_y + lo.board_size + 10, 20, col_card, col_border)
+
+    # 9 Cells + Marks
+    let pad: i32 = 6
+    for idx in 0..9:
+        let row = (idx as i32) / 3
+        let col = (idx as i32) % 3
+        let x1 = lo.board_x + col * lo.cell_size + pad
+        let y1 = lo.board_y + row * lo.cell_size + pad
+        let x2 = lo.board_x + (col + 1) * lo.cell_size - pad
+        let y2 = lo.board_y + (row + 1) * lo.cell_size - pad
+
+        let win_hl = is_winning_cell(g.win_line_idx, idx as i32)
+        let is_hovered = (g.hover_cell == (idx as i32)) and g.board[idx] == CELL_EMPTY and g.winner == CELL_EMPTY and not g.is_draw and not g.ai_thinking
+        let fill_c = col_win_cell if win_hl else (col_cell_hover if is_hovered else col_cell)
+        let bord_c = col_win if win_hl else col_border
+        fill_round_card(mem_dc, x1, y1, x2, y2, 16, fill_c, bord_c)
+
+        let cx = (x1 + x2) / 2
+        let cy = (y1 + y2) / 2
+        let mark_r = (lo.cell_size - pad * 2) / 4
+        let mark_thick: i32 = 7 if lo.cell_size >= 110 else 5
+
+        if g.board[idx] == CELL_X:
+            draw_x_mark(mem_dc, cx, cy, mark_r, col_win if win_hl else col_x, mark_thick)
+        elif g.board[idx] == CELL_O:
+            draw_o_mark(mem_dc, cx, cy, mark_r, col_win if win_hl else col_o, mark_thick)
+        elif is_hovered:
+            # Subtle ghost preview of current player's mark
+            if g.turn == CELL_X:
+                draw_x_mark(mem_dc, cx, cy, mark_r, win32.rgb(42, 85, 118), 3)
+            else:
+                draw_o_mark(mem_dc, cx, cy, mark_r, win32.rgb(112, 54, 72), 3)
+
+    # Winning Strike Line
+    if g.win_line_idx >= 0:
+        let lines: [[i32; 3]; 8] = [
+            [0, 1, 2], [3, 4, 5], [6, 7, 8],
+            [0, 3, 6], [1, 4, 7], [2, 5, 8],
+            [0, 4, 8], [2, 4, 6]
+        ]
+        let c_start = lines[g.win_line_idx][0]
+        let c_end = lines[g.win_line_idx][2]
+        let sx = lo.board_x + (c_start % 3) * lo.cell_size + lo.cell_size / 2
+        let sy = lo.board_y + (c_start / 3) * lo.cell_size + lo.cell_size / 2
+        let ex = lo.board_x + (c_end % 3) * lo.cell_size + lo.cell_size / 2
+        let ey = lo.board_y + (c_end / 3) * lo.cell_size + lo.cell_size / 2
+        let wpen = win32.CreatePen(win32.PS_SOLID, 5, col_win)
+        let old_p = win32.SelectObject(mem_dc, wpen)
+        win32.MoveToEx(mem_dc, sx, sy, null)
+        win32.LineTo(mem_dc, ex, ey)
+        win32.SelectObject(mem_dc, old_p)
+        win32.DeleteObject(wpen)
+
+    # Bottom Action Buttons
+    win32.SelectObject(mem_dc, font_btn)
+    win32.SetTextColor(mem_dc, col_text)
+
+    fill_round_card(mem_dc, lo.btn_new_x1, lo.btn_new_y1, lo.btn_new_x2, lo.btn_new_y2, 12,
+        col_btn_hover if g.hover_btn == 1 else col_btn, col_border)
+    var b1_rc = win32.RECT(left: lo.btn_new_x1, top: lo.btn_new_y1, right: lo.btn_new_x2, bottom: lo.btn_new_y2)
+    win32.DrawTextW(mem_dc, w"New Game (R)", -1, &b1_rc, win32.DT_CENTER | win32.DT_VCENTER | win32.DT_SINGLELINE)
+
+    fill_round_card(mem_dc, lo.btn_mode_x1, lo.btn_mode_y1, lo.btn_mode_x2, lo.btn_mode_y2, 12,
+        col_btn_hover if g.hover_btn == 2 else col_btn, col_border)
+    var b2_rc = win32.RECT(left: lo.btn_mode_x1, top: lo.btn_mode_y1, right: lo.btn_mode_x2, bottom: lo.btn_mode_y2)
+    let mode_lbl = w"Mode: vs AI" if g.vs_ai else w"Mode: 2P"
+    win32.DrawTextW(mem_dc, mode_lbl, -1, &b2_rc, win32.DT_CENTER | win32.DT_VCENTER | win32.DT_SINGLELINE)
+
+    fill_round_card(mem_dc, lo.btn_first_x1, lo.btn_first_y1, lo.btn_first_x2, lo.btn_first_y2, 12,
+        col_btn_hover if g.hover_btn == 3 else col_btn, col_border)
+    var b3_rc = win32.RECT(left: lo.btn_first_x1, top: lo.btn_first_y1, right: lo.btn_first_x2, bottom: lo.btn_first_y2)
+    if g.vs_ai:
+        let first_lbl = w"First: AI" if g.ai_starts else w"First: You"
+        win32.DrawTextW(mem_dc, first_lbl, -1, &b3_rc, win32.DT_CENTER | win32.DT_VCENTER | win32.DT_SINGLELINE)
+    else:
+        win32.SetTextColor(mem_dc, col_muted)
+        win32.DrawTextW(mem_dc, w"Reset Score", -1, &b3_rc, win32.DT_CENTER | win32.DT_VCENTER | win32.DT_SINGLELINE)
+
+    # Blit backbuffer to screen
+    win32.BitBlt(hdc_screen, 0, 0, client_w, client_h, mem_dc, 0, 0, win32.SRCCOPY)
+
+    win32.SelectObject(mem_dc, old_font)
+    win32.DeleteObject(font_title)
+    win32.DeleteObject(font_sub)
+    win32.DeleteObject(font_score)
+    win32.DeleteObject(font_btn)
+    win32.SelectObject(mem_dc, old_bmp)
+    win32.DeleteObject(bmp)
+    win32.DeleteDC(mem_dc)
+
+def wnd_proc(hwnd: ptr, msg: u32, wparam: u64, lparam: i64) -> i64:
+    let g_raw = win32.GetWindowLongPtrW(hwnd, win32.GWLP_USERDATA)
+    if g_raw == 0:
+        if msg == win32.WM_DESTROY:
+            win32.PostQuitMessage(0)
+            return 0
+        return win32.DefWindowProcW(hwnd, msg, wparam, lparam)
+
+    let g = g_raw as *GameState
+
+    if msg == win32.WM_ERASEBKGND:
+        return 1
+
+    if msg == win32.WM_PAINT:
+        var ps = zeroed(win32.PAINTSTRUCT)
+        let hdc = win32.BeginPaint(hwnd, &ps)
+        var rc = zeroed(win32.RECT)
+        win32.GetClientRect(hwnd, &rc)
+        let cw = rc.right - rc.left
+        let ch = rc.bottom - rc.top
+        if cw > 0 and ch > 0:
+            draw_scene(hdc, g, cw, ch)
+        win32.EndPaint(hwnd, &ps)
+        return 0
+
+    if msg == win32.WM_SIZE:
+        win32.InvalidateRect(hwnd, null, 0)
+        return 0
+
+    if msg == win32.WM_MOUSEMOVE:
+        var rc = zeroed(win32.RECT)
+        win32.GetClientRect(hwnd, &rc)
+        let lo = compute_layout(rc.right - rc.left, rc.bottom - rc.top)
+        let mx = win32.lparam_x(lparam)
+        let my = win32.lparam_y(lparam)
+        let hc = hit_test_cell(&lo, mx, my)
+        let hb = hit_test_btn(&lo, mx, my)
+        if hc != g.hover_cell or hb != g.hover_btn:
+            g.hover_cell = hc
+            g.hover_btn = hb
+            win32.InvalidateRect(hwnd, null, 0)
+        let can_click_cell = hc >= 0 and g.board[hc] == CELL_EMPTY and g.winner == CELL_EMPTY and not g.is_draw and not g.ai_thinking
+        if hb > 0 or can_click_cell:
+            win32.SetCursor(win32.LoadCursorW(null, win32.IDC_HAND as ptr))
+        else:
+            win32.SetCursor(win32.LoadCursorW(null, win32.IDC_ARROW as ptr))
+        return 0
+
+    if msg == win32.WM_LBUTTONDOWN:
+        var rc = zeroed(win32.RECT)
+        win32.GetClientRect(hwnd, &rc)
+        let lo = compute_layout(rc.right - rc.left, rc.bottom - rc.top)
+        let mx = win32.lparam_x(lparam)
+        let my = win32.lparam_y(lparam)
+
+        let btn = hit_test_btn(&lo, mx, my)
+        if btn == 1:
+            g.reset_round()
+            win32.InvalidateRect(hwnd, null, 0)
+            return 0
+        elif btn == 2:
+            g.vs_ai = not g.vs_ai
+            g.score_x = 0
+            g.score_o = 0
+            g.draws = 0
+            g.reset_round()
+            win32.InvalidateRect(hwnd, null, 0)
+            return 0
+        elif btn == 3:
+            if g.vs_ai:
+                g.ai_starts = not g.ai_starts
+            else:
+                g.score_x = 0
+                g.score_o = 0
+                g.draws = 0
+            g.reset_round()
+            win32.InvalidateRect(hwnd, null, 0)
+            return 0
+
+        if not g.ai_thinking:
+            let cell = hit_test_cell(&lo, mx, my)
+            if cell >= 0:
+                if g.play_move(cell):
+                    win32.InvalidateRect(hwnd, null, 0)
+        return 0
+
+    if msg == win32.WM_TIMER:
+        if wparam == 1 and g.ai_thinking:
+            win32.KillTimer(hwnd, 1)
+            g.ai_thinking = false
+            let mv = pick_ai_move(g)
+            if mv >= 0:
+                g.play_move(mv)
+            win32.InvalidateRect(hwnd, null, 0)
+        return 0
+
+    if msg == win32.WM_KEYDOWN:
+        if wparam == win32.VK_R or wparam == win32.VK_SPACE:
+            g.reset_round()
+            win32.InvalidateRect(hwnd, null, 0)
+        elif wparam == win32.VK_ESCAPE:
+            win32.PostQuitMessage(0)
+        return 0
+
+    if msg == win32.WM_DESTROY:
+        win32.KillTimer(hwnd, 1)
+        win32.PostQuitMessage(0)
+        return 0
+
+    return win32.DefWindowProcW(hwnd, msg, wparam, lparam)
+
+def main() -> i32:
+    win32.SetProcessDPIAware()
+    let hinst = win32.GetModuleHandleW(null)
+    let cls_name = w"VeloTicTacToeWindow"
+
+    var wc = zeroed(win32.WNDCLASSEXW)
+    wc.cbSize = sizeof(win32.WNDCLASSEXW) as u32
+    wc.style = win32.CS_HREDRAW | win32.CS_VREDRAW
+    wc.lpfnWndProc = wnd_proc
+    wc.hInstance = hinst
+    wc.hCursor = win32.LoadCursorW(null, win32.IDC_ARROW as ptr)
+    wc.hbrBackground = null
+    wc.lpszClassName = cls_name
+
+    if win32.RegisterClassExW(&wc) == 0:
+        win32.MessageBoxA(null, "Failed to register window class", "Velo Error", win32.MB_OK)
+        return 1
+
+    let hwnd = win32.CreateWindowExW(
+        0,
+        cls_name,
+        w"Velo Tic-Tac-Toe",
+        win32.WS_OVERLAPPEDWINDOW,
+        win32.CW_USEDEFAULT,
+        win32.CW_USEDEFAULT,
+        WIN_W,
+        WIN_H,
+        null,
+        null,
+        hinst,
+        null
+    )
+    if hwnd == null:
+        win32.MessageBoxA(null, "Failed to create window", "Velo Error", win32.MB_OK)
+        return 1
+
+    let g: *GameState = alloc(sizeof(GameState))
+    defer free(g as ptr)
+    g.init(hwnd)
+    win32.SetWindowLongPtrW(hwnd, win32.GWLP_USERDATA, g as i64)
+
+    win32.ShowWindow(hwnd, win32.SW_SHOW)
+    win32.UpdateWindow(hwnd)
+    win32.InvalidateRect(hwnd, null, 0)
+
+    var msg = zeroed(win32.MSG)
+    while win32.GetMessageW(&msg, null, 0, 0) > 0:
+        win32.TranslateMessage(&msg)
+        win32.DispatchMessageW(&msg)
+
+    return 0

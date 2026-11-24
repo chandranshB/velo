@@ -1,0 +1,32 @@
+# Sieve of Eratosthenes benchmark in Velo
+
+def count_primes(limit: i64) -> i64:
+    let flags: *u8 = alloc(limit + 1)
+    defer free(flags as ptr)
+    set_mem(flags as ptr, 1, limit + 1)
+    flags[0] = 0
+    flags[1] = 0
+
+    var p: i64 = 2
+    while p * p <= limit:
+        if flags[p] != 0:
+            var m = p * p
+            while m <= limit:
+                flags[m] = 0
+                m += p
+        p += 1
+
+    var count: i64 = 0
+    for i in 2..=limit:
+        if flags[i] != 0:
+            count += 1
+    return count
+
+def main() -> i32:
+    let limit: i64 = 10000000
+    let t0 = time_ns()
+    let total = count_primes(limit)
+    let t1 = time_ns()
+    let ms = (t1 - t0) as f64 / 1000000.0
+    print(f"Primes up to {limit}: {total} in {ms:.2} ms")
+    return 0

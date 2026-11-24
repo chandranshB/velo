@@ -1,0 +1,33 @@
+# Matrix multiplication benchmark demonstrating strict noalias optimization in Velo
+
+def matmul(n: i64, a: *f64, b: *f64, c: *f64):
+    for i in 0..n:
+        let row_a = i * n
+        let row_c = i * n
+        for k in 0..n:
+            let aik = a[row_a + k]
+            let row_b = k * n
+            for j in 0..n:
+                c[row_c + j] += aik * b[row_b + j]
+
+def main() -> i32:
+    let n: i64 = 512
+    let bytes = n * n * 8
+    let a: *f64 = alloc(bytes)
+    let b: *f64 = alloc(bytes)
+    let c: *f64 = alloc(bytes)
+    defer free(a as ptr)
+    defer free(b as ptr)
+    defer free(c as ptr)
+
+    for i in 0..(n * n):
+        a[i] = ((i % 97) as f64) * 0.01
+        b[i] = ((i % 89) as f64) * 0.02
+        c[i] = 0.0
+
+    let t0 = time_ns()
+    matmul(n, a, b, c)
+    let t1 = time_ns()
+    let ms = (t1 - t0) as f64 / 1000000.0
+    print(f"Velo 512x512 matmul: {ms:.2} ms (checksum={c[0]:.4})")
+    return 0

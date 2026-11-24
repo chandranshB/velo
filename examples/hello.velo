@@ -1,0 +1,11 @@
+def greet(name: str):
+    print(f"Hello from Velo, {name}!")
+
+def main() -> i32:
+    greet("World")
+    let nums = [10, 20, 30, 40, 50]
+    var sum = 0
+    for x in nums:
+        sum += x
+    print(f"Sum = {sum}")
+    return 0
